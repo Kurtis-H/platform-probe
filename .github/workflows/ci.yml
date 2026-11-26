@@ -21,7 +21,10 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        # Pinned: @latest moved to a release that needs a newer Go than go.mod
+        # (staticcheck v0.8.2 requires Go 1.26), which broke every build.
+        # v0.6.1 is staticcheck 2025.1.1, made for Go 1.24.
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.6.1 ./...
       - name: Tests with the race detector
         run: go test -race -coverprofile=coverage.out ./...
       - name: At least 85% statement coverage
@@ -34,7 +37,8 @@ jobs:
           go test ./internal/jsonpath -run '^$' -fuzz FuzzLookup -fuzztime 15s
           go test ./internal/config -run '^$' -fuzz FuzzParse -fuzztime 15s
       - name: Known vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        # Pinned for the same reason as staticcheck.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   live:
     name: Probes against the real booking platform
