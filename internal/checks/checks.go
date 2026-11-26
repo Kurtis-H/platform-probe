@@ -16,6 +16,25 @@ import (
 	"github.com/Kurtis-H/platform-probe/internal/jsonpath"
 )
 
+// NewClient returns the HTTP client probes should use. It follows redirects
+// only within the same host: Go keeps custom headers such as X-API-Key when
+// it follows a redirect, so a redirect to another host would hand that host
+// the probe's keys.
+func NewClient(backstop time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: backstop,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("refusing to follow a redirect from %s to %s", via[0].URL.Host, req.URL.Host)
+			}
+			return nil
+		},
+	}
+}
+
 // Checker runs a check once. A nil error means it passed.
 type Checker interface {
 	Run(ctx context.Context) error

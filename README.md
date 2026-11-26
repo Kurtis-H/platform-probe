@@ -48,6 +48,10 @@ page size is capped  FAIL    22ms   1      status 200, want 422
 5. check the seat is no longer for sale
 6. check a **different** buyer gets a 404 for that order (an access-control check, run continuously)
 
+The journey makes a real event and order every time it runs, so point it at a test environment, or give it a longer `interval` than the other checks.
+
+Probes follow redirects only on the same host, because Go forwards custom headers like `X-API-Key` when it follows a redirect.
+
 Every check has a `timeout` per attempt and up to 5 `retries` with backoff (200 ms, 400 ms, 800 ms...). All checks in a round run concurrently. Values like `${API_URL}` are filled from the environment, so one file works locally, in Docker and in CI.
 
 ```json

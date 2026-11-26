@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -235,5 +236,56 @@ func TestBookingPurchaseUnreachable(t *testing.T) {
 	err := run(t, config.Check{Name: "j", Type: config.TypeBookingPurchase, BaseURL: "http://127.0.0.1:1", AdminKey: "a", BuyerKey: "b"})
 	if err == nil || !strings.HasPrefix(err.Error(), "step 1") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNewClientKeepsKeysOnTheSameHost(t *testing.T) {
+	var sawKey atomic.Value
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawKey.Store(r.Header.Get("X-API-Key"))
+	}))
+	defer other.Close()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/same":
+			http.Redirect(w, r, srv.URL+"/ok", http.StatusFound)
+		case "/elsewhere":
+			// 127.0.0.1 vs localhost would share a host; a different port does not.
+			http.Redirect(w, r, other.URL+"/steal", http.StatusFound)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient(time.Minute)
+	withKey := func(path string) config.Check {
+		return httpCheck(srv.URL+path, func(c *config.Check) { c.Headers = map[string]string{"X-API-Key": "key-admin"} })
+	}
+
+	ch, _ := New(withKey("/same"), client)
+	if err := ch.Run(context.Background()); err != nil {
+		t.Fatalf("same-host redirect: %v", err)
+	}
+
+	ch, _ = New(withKey("/elsewhere"), client)
+	err := ch.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing to follow a redirect") {
+		t.Fatalf("cross-host redirect: got %v, want a refusal", err)
+	}
+	if k, _ := sawKey.Load().(string); k != "" {
+		t.Fatalf("the other host received the key %q", k)
+	}
+}
+
+func TestNewClientStopsRedirectLoops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path, http.StatusFound)
+	}))
+	defer srv.Close()
+	ch, _ := New(httpCheck(srv.URL+"/loop", nil), NewClient(time.Minute))
+	if err := ch.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "10 redirects") {
+		t.Fatalf("got %v, want the loop to stop", err)
 	}
 }

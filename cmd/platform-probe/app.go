@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Kurtis-H/platform-probe/internal/checks"
 	"github.com/Kurtis-H/platform-probe/internal/config"
 	"github.com/Kurtis-H/platform-probe/internal/metrics"
 	"github.com/Kurtis-H/platform-probe/internal/runner"
@@ -75,7 +76,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 func newRunner(cfg *config.Config) (*runner.Runner, error) {
 	// Each check has its own context timeout; this is only a backstop.
-	return runner.New(cfg, &http.Client{Timeout: 2 * time.Minute})
+	return runner.New(cfg, checks.NewClient(2*time.Minute))
 }
 
 func runOnce(ctx context.Context, cfg *config.Config, out io.Writer, asJSON bool) int {
