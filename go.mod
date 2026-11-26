@@ -1,3 +1,3 @@
 module github.com/Kurtis-H/platform-probe
 
-go 1.24
+go 1.26
