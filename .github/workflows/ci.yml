@@ -81,9 +81,18 @@ jobs:
         run: ./platform-probe run -config examples/booking.json
       - name: Probes catch a regression (page size limit removed)
         run: |
+          # Stop the healthy server and wait until it has really gone, so the
+          # next check can't be answered by the old process.
           pkill -f "uvicorn app.main"
+          while pgrep -f "uvicorn app.main" >/dev/null; do sleep 0.5; done
           PERF_BUGS=no_page_limit RATE_LIMIT_PER_MINUTE=600 nohup uvicorn app.main:app --port 8000 > api-broken.log 2>&1 &
-          for i in $(seq 1 60); do curl -sf localhost:8000/health >/dev/null && break; sleep 1; done
+          # Ready means up *and* the bug is on: an oversized page is accepted.
+          ready=0
+          for i in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' 'localhost:8000/events?limit=500')" = 200 ] && { ready=1; break; }
+            sleep 1
+          done
+          [ "$ready" = 1 ] || { cat api-broken.log; echo "::error::The API didn't restart with the bug on"; exit 1; }
           set +e
           ./platform-probe run -config examples/booking.json -json > results.json
           code=$?
