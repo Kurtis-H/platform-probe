@@ -59,7 +59,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build -o platform-probe ./cmd/platform-probe
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install "git+https://github.com/Kurtis-H/api-performance-lab"
