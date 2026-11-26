@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, vet and tests (race detector)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - name: Tests with the race detector
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: At least 85% statement coverage
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$3); print $3}')
+          echo "Total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { exit !(t >= 85) }'
+      - name: Fuzz the parsers briefly
+        run: |
+          go test ./internal/jsonpath -run '^$' -fuzz FuzzLookup -fuzztime 15s
+          go test ./internal/config -run '^$' -fuzz FuzzParse -fuzztime 15s
+      - name: Known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  live:
+    name: Probes against the real booking platform
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: booking
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/booking
+      API_URL: http://localhost:8000
+      WEB_URL: http://localhost:4173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o platform-probe ./cmd/platform-probe
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "git+https://github.com/Kurtis-H/api-performance-lab"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Start the web app (booking-web)
+        run: |
+          git clone --depth 1 https://github.com/Kurtis-H/booking-web ../booking-web
+          cd ../booking-web && npm ci && npm run build
+          nohup npx vite preview --port 4173 --strictPort > ../web.log 2>&1 &
+      - name: Start the API with every fix on
+        run: |
+          python -m app.seed --events 30 --seats 40 --users 60
+          RATE_LIMIT_PER_MINUTE=600 nohup uvicorn app.main:app --port 8000 > api.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:8000/health && curl -sf localhost:4173 >/dev/null && exit 0; sleep 1; done
+          cat api.log; exit 1
+      - name: Every probe passes on a healthy platform
+        run: ./platform-probe run -config examples/booking.json
+      - name: Probes catch a regression (page size limit removed)
+        run: |
+          # Stop the healthy server and wait until it has really gone, so the
+          # next check can't be answered by the old process.
+          pkill -f "uvicorn app.main"
+          while pgrep -f "uvicorn app.main" >/dev/null; do sleep 0.5; done
+          PERF_BUGS=no_page_limit RATE_LIMIT_PER_MINUTE=600 nohup uvicorn app.main:app --port 8000 > api-broken.log 2>&1 &
+          # Ready means up *and* the bug is on: an oversized page is accepted.
+          ready=0
+          for i in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' 'localhost:8000/events?limit=500')" = 200 ] && { ready=1; break; }
+            sleep 1
+          done
+          [ "$ready" = 1 ] || { cat api-broken.log; echo "::error::The API didn't restart with the bug on"; exit 1; }
+          set +e
+          ./platform-probe run -config examples/booking.json -json > results.json
+          code=$?
+          set -e
+          cat results.json
+          test "$code" = 1 || { echo "::error::Expected the probes to fail"; exit 1; }
+          jq -e '.[] | select(.name == "page size is capped") | .ok == false and (.error | contains("status 200, want 422"))' results.json
+          jq -e '[.[] | select(.name != "page size is capped") | .ok] | all' results.json
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t platform-probe .
+      - name: Image runs and validates its bundled config
+        run: docker run --rm -e API_URL=http://api:8000 -e WEB_URL=http://web platform-probe validate -config /etc/platform-probe/probes.json

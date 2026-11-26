@@ -1,0 +1,55 @@
+{
+  "interval": "30s",
+  "checks": [
+    {
+      "name": "api health",
+      "type": "http",
+      "url": "${API_URL}/health",
+      "timeout": "2s",
+      "max_latency": "500ms",
+      "json": [{"path": "status", "equals": "ok"}]
+    },
+    {
+      "name": "event list",
+      "type": "http",
+      "url": "${API_URL}/events?limit=20",
+      "timeout": "5s",
+      "retries": 1,
+      "max_latency": "1s",
+      "json": [
+        {"path": "items", "min_items": 1},
+        {"path": "limit", "equals": 20},
+        {"path": "items.0.available_seats", "exists": true}
+      ]
+    },
+    {
+      "name": "page size is capped",
+      "type": "http",
+      "url": "${API_URL}/events?limit=100000",
+      "expect_status": 422
+    },
+    {
+      "name": "orders need a key",
+      "type": "http",
+      "url": "${API_URL}/orders",
+      "expect_status": 401
+    },
+    {
+      "name": "web app is up",
+      "type": "http",
+      "url": "${WEB_URL}/",
+      "timeout": "5s",
+      "max_latency": "1s"
+    },
+    {
+      "name": "purchase journey",
+      "type": "booking_purchase",
+      "base_url": "${API_URL}",
+      "admin_key": "key-admin",
+      "buyer_key": "key-user-11",
+      "other_key": "key-user-12",
+      "timeout": "15s",
+      "retries": 1
+    }
+  ]
+}

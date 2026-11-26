@@ -1,0 +1,7 @@
+# Add to the scrape_configs in api-performance-lab/monitoring/prometheus.yml
+# to put probe results next to the API's own metrics in Grafana.
+scrape_configs:
+  - job_name: platform-probe
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["platform-probe:9100"]
