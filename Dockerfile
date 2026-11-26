@@ -1,5 +1,5 @@
 # Static binary on a distroless image: no shell, no package manager, non-root.
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
